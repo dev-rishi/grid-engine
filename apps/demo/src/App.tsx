@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { GridStore, ServerRowModelController, IGridDatasource } from '@grid-engine/core';
 import {
@@ -437,7 +437,7 @@ export default function App() {
   }, []);
 
   // Pluggable formula recalculations on edit commit
-  const handleClientCellValueChanged = (row: number, col: number, val: any) => {
+  const handleClientCellValueChanged = useCallback((row: number, col: number, val: any) => {
     // If Price (2) or Quantity (3) edits committed, recalculate Subtotal (4)
     if (col === 2 || col === 3) {
       const priceVal = clientStore.getCellState(row, 2).value;
@@ -448,7 +448,7 @@ export default function App() {
       
       clientStore.setCellValue(row, 4, subtotal);
     }
-  };
+  }, [clientStore]);
 
   // B. Create Server-Side Grid Instance
   const serverStore = useMemo(() => {

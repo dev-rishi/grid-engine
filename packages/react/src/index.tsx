@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useSyncExternalStore, useRef } from 'react';
+import React, { createContext, useContext, useMemo, useSyncExternalStore, useRef, useCallback } from 'react';
 import { GridStore, GridState, GridNavigationController, GridNavigationOptions, GridApi } from '@grid-engine/core';
 
 // Create Grid Context
@@ -34,10 +34,18 @@ export function useGridApi(): GridApi {
  */
 export function useGridSelector<T>(selector: (state: GridState) => T): T {
   const store = useGridStore();
+  
+  const selectorRef = useRef(selector);
+  selectorRef.current = selector;
+  
+  const getSnapshot = useCallback(
+    () => selectorRef.current(store.getState()),
+    [store]
+  );
 
   return useSyncExternalStore(
     store.subscribe,
-    () => selector(store.getState())
+    getSnapshot
   );
 }
 
@@ -47,9 +55,22 @@ export function useGridSelector<T>(selector: (state: GridState) => T): T {
 export function useGridKeySelector<T>(key: string, selector: (state: GridState) => T): T {
   const store = useGridStore();
 
+  const selectorRef = useRef(selector);
+  selectorRef.current = selector;
+
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => store.subscribeToKey(key, onStoreChange),
+    [store, key]
+  );
+
+  const getSnapshot = useCallback(
+    () => selectorRef.current(store.getState()),
+    [store]
+  );
+
   return useSyncExternalStore(
-    (onStoreChange) => store.subscribeToKey(key, onStoreChange),
-    () => selector(store.getState())
+    subscribe,
+    getSnapshot
   );
 }
 
@@ -60,10 +81,17 @@ export function useGridCell(row: number, col: number) {
   const store = useGridStore();
   const key = `cell:${row},${col}`;
 
-  const cellState = useSyncExternalStore(
-    (onStoreChange) => store.subscribeToKey(key, onStoreChange),
-    () => store.getCellState(row, col)
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => store.subscribeToKey(key, onStoreChange),
+    [store, key]
   );
+
+  const getSnapshot = useCallback(
+    () => store.getCellState(row, col),
+    [store, row, col]
+  );
+
+  const cellState = useSyncExternalStore(subscribe, getSnapshot);
 
   return cellState;
 }
