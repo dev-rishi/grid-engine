@@ -177,3 +177,18 @@ Fires up the premium virtualized React demonstration dashboard locally:
 pnpm dev:demo
 ```
 Once active, navigate your browser to the local URL (default is `http://localhost:5173`) to test interactive resizes, formula evaluations, custom dropdown select editors, and core transaction logs in the event inspector!
+
+---
+
+## 👑 Author & Creator
+
+**Rishikesh Kumar**  
+Lead Architect & Original Creator of Grid Engine  
+* High-Performance Frontend Infrastructure Engineer
+
+---
+
+## 📄 License
+
+Grid Engine is released under the permissive [MIT License](file:///Users/rishikeshkumar/Documents/GitHub/grid-engine/LICENSE). Feel free to use, modify, and distribute it for personal or commercial projects.
+
