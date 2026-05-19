@@ -81,7 +81,7 @@ interface HeaderCellProps {
   api: ReturnType<typeof useGridApi>;
 }
 
-const HeaderCell = ({ colIndex, header, width, api }: HeaderCellProps) => {
+const HeaderCell = React.memo(({ colIndex, header, width, api }: HeaderCellProps) => {
   // Subscribe to changes in this column's width
   const colWidth = useGridSelector((state) => state.colWidths[colIndex] ?? width);
 
@@ -120,7 +120,9 @@ const HeaderCell = ({ colIndex, header, width, api }: HeaderCellProps) => {
       />
     </div>
   );
-};
+});
+
+HeaderCell.displayName = 'HeaderCell';
 
 // ==========================================
 // C. High Performance Grid Cell Component
@@ -395,13 +397,127 @@ function GridView({
   );
 }
 
+interface StateInspectorProps {
+  store: GridStore;
+}
+
+const StateInspectorContent = () => {
+  const gridStateInfo = useGridSelector((state) => {
+    const focus = state.focusedCell;
+    const range = state.selectedRange;
+    
+    const focusText = focus ? `Row ${focus.row}, Col ${focus.col}` : 'None';
+    const rangeText = range 
+      ? `(${range.start.row},${range.start.col}) to (${range.end.row},${range.end.col})`
+      : 'None';
+    
+    return `Focused Cell: ${focusText} | Selected Range: ${rangeText}`;
+  });
+
+  return (
+    <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-3 shrink-0">
+      <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+        <TableProperties className="w-4 h-4 text-purple-400" />
+        State Inspector
+      </h3>
+      <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-purple-400 leading-relaxed break-all">
+        {gridStateInfo}
+      </div>
+      <p className="text-slate-500 text-[10px] leading-relaxed">
+        * Cell coordinates reflect absolute indexes in memory. Updates bypass React's virtual DOM tree using targeted micro-subscriptions to maximize rendering framerate.
+      </p>
+    </div>
+  );
+};
+
+const StateInspector = React.memo(({ store }: StateInspectorProps) => {
+  return (
+    <GridProvider store={store}>
+      <StateInspectorContent />
+    </GridProvider>
+  );
+});
+
+StateInspector.displayName = 'StateInspector';
+
+interface LiveEventLogPanelProps {
+  store: GridStore;
+}
+
+const LiveEventLogPanel = React.memo(({ store }: LiveEventLogPanelProps) => {
+  const [eventLogs, setEventLogs] = useState<string[]>([]);
+
+  useEffect(() => {
+    // Clear logs on store switch
+    setEventLogs([]);
+
+    const formatLog = (name: string, payload: any) => {
+      const time = new Date().toLocaleTimeString();
+      return `[${time}] ${name} -> ${JSON.stringify(payload, null, 2)}`;
+    };
+
+    const addLog = (msg: string) => {
+      setEventLogs((prev) => [msg, ...prev].slice(0, 40));
+    };
+
+    const unsubValue = store.addEventListener('cellValueChanged', (e) => {
+      addLog(formatLog('cellValueChanged', e.payload));
+    });
+
+    const unsubResize = store.addEventListener('columnResized', (e) => {
+      addLog(formatLog('columnResized', e.payload));
+    });
+
+    const unsubFocus = store.addEventListener('focusChanged', (e) => {
+      addLog(formatLog('focusChanged', e.payload));
+    });
+
+    const unsubSelect = store.addEventListener('selectionChanged', (e) => {
+      addLog(formatLog('selectionChanged', e.payload));
+    });
+
+    return () => {
+      unsubValue();
+      unsubResize();
+      unsubFocus();
+      unsubSelect();
+    };
+  }, [store]);
+
+  return (
+    <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-3 h-64 shrink-0">
+      <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 shrink-0">
+        <Terminal className="w-4 h-4 text-emerald-400" />
+        Live Core Event Log
+      </h3>
+      <div className="flex-1 min-h-0 overflow-y-auto p-3 bg-slate-950 border border-slate-850 rounded-lg font-mono text-[10px] text-slate-300 leading-relaxed flex flex-col gap-1">
+        {eventLogs.length === 0 ? (
+          <span className="text-slate-600 italic">No events emitted yet. Interact with the grid (resize, select, double click status, edit Price) to broadcast events...</span>
+        ) : (
+          eventLogs.map((log, index) => {
+            const parts = log.split(' -> ');
+            const header = parts[0] || '';
+            const body = parts[1] || '';
+            return (
+              <div key={index} className="border-b border-slate-900 pb-1.5 text-slate-400 font-mono text-[9px] break-all whitespace-pre-wrap leading-relaxed">
+                <span className="text-emerald-400 font-semibold">{header}</span>
+                {body && <span className="text-purple-300 block pl-2 mt-0.5">{body}</span>}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+});
+
+LiveEventLogPanel.displayName = 'LiveEventLogPanel';
+
 // ==========================================
 // E. Main Dashboard Application
 // ==========================================
 export default function App() {
   const [activeTab, setActiveTab] = useState<'client' | 'server'>('client');
-  const [gridStateInfo, setGridStateInfo] = useState<string>('Focused: None | Selected: None');
-  const [eventLogs, setEventLogs] = useState<string[]>([]);
   const [editTrigger, setEditTrigger] = useState<'singleClick' | 'doubleClick'>('doubleClick');
   const [arrowKeyNavigationEdit, setArrowKeyNavigationEdit] = useState<boolean>(false);
 
@@ -504,58 +620,6 @@ export default function App() {
     });
   }, [serverStore, mockDatasource]);
 
-  // Dynamic E2E Core Event listeners hook
-  useEffect(() => {
-    const store = activeTab === 'client' ? clientStore : serverStore;
-    
-    // State log updates
-    const unsubscribeState = store.subscribe((state) => {
-      const focus = state.focusedCell;
-      const range = state.selectedRange;
-      
-      const focusText = focus ? `Row ${focus.row}, Col ${focus.col}` : 'None';
-      const rangeText = range 
-        ? `(${range.start.row},${range.start.col}) to (${range.end.row},${range.end.col})`
-        : 'None';
-      
-      setGridStateInfo(`Focused Cell: ${focusText} | Selected Range: ${rangeText}`);
-    });
-
-    // Custom Event log emitter bindings
-    const formatLog = (name: string, payload: any) => {
-      const time = new Date().toLocaleTimeString();
-      return `[${time}] ${name} -> ${JSON.stringify(payload, null, 2)}`;
-    };
-
-    const addLog = (msg: string) => {
-      setEventLogs((prev) => [msg, ...prev].slice(0, 40));
-    };
-
-    const unsubValue = store.addEventListener('cellValueChanged', (e) => {
-      addLog(formatLog('cellValueChanged', e.payload));
-    });
-
-    const unsubResize = store.addEventListener('columnResized', (e) => {
-      addLog(formatLog('columnResized', e.payload));
-    });
-
-    const unsubFocus = store.addEventListener('focusChanged', (e) => {
-      addLog(formatLog('focusChanged', e.payload));
-    });
-
-    const unsubSelect = store.addEventListener('selectionChanged', (e) => {
-      addLog(formatLog('selectionChanged', e.payload));
-    });
-
-    return () => {
-      unsubscribeState();
-      unsubValue();
-      unsubResize();
-      unsubFocus();
-      unsubSelect();
-    };
-  }, [activeTab, clientStore, serverStore]);
-
   return (
     <div className="flex flex-col h-full w-full bg-slate-950 text-slate-100 p-6 box-border">
       {/* Premium Dashboard Header */}
@@ -635,18 +699,7 @@ export default function App() {
         {/* Right Side: Visual Metrics & Control Dashboard Panel */}
         <div className="w-full md:w-80 flex flex-col gap-6 shrink-0 overflow-y-auto">
           {/* Active coordinate coordinates indicator */}
-          <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-3 shrink-0">
-            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <TableProperties className="w-4 h-4 text-purple-400" />
-              State Inspector
-            </h3>
-            <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-purple-400 leading-relaxed break-all">
-              {gridStateInfo}
-            </div>
-            <p className="text-slate-500 text-[10px] leading-relaxed">
-              * Cell coordinates reflect absolute indexes in memory. Updates bypass React's virtual DOM tree using targeted micro-subscriptions to maximize rendering framerate.
-            </p>
-          </div>
+          <StateInspector store={activeTab === 'client' ? clientStore : serverStore} />
 
           {/* Pluggable Accessibility Configuration Options */}
           <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-4 shrink-0">
@@ -686,29 +739,7 @@ export default function App() {
           </div>
 
           {/* Premium Pluggable Live Event Log Panel */}
-          <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-3 h-64 shrink-0">
-            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 shrink-0">
-              <Terminal className="w-4 h-4 text-emerald-400" />
-              Live Core Event Log
-            </h3>
-            <div className="flex-1 min-h-0 overflow-y-auto p-3 bg-slate-950 border border-slate-850 rounded-lg font-mono text-[10px] text-slate-300 leading-relaxed flex flex-col gap-1">
-              {eventLogs.length === 0 ? (
-                <span className="text-slate-600 italic">No events emitted yet. Interact with the grid (resize, select, double click status, edit Price) to broadcast events...</span>
-              ) : (
-                eventLogs.map((log, index) => {
-                  const parts = log.split(' -> ');
-                  const header = parts[0] || '';
-                  const body = parts[1] || '';
-                  return (
-                    <div key={index} className="border-b border-slate-900 pb-1.5 text-slate-400 font-mono text-[9px] break-all whitespace-pre-wrap leading-relaxed">
-                      <span className="text-emerald-400 font-semibold">{header}</span>
-                      {body && <span className="text-purple-300 block pl-2 mt-0.5">{body}</span>}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
+          <LiveEventLogPanel store={activeTab === 'client' ? clientStore : serverStore} />
 
           {/* Quick interactive utility scripts */}
           <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-4 shrink-0">
