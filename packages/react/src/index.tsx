@@ -45,6 +45,7 @@ export function useGridSelector<T>(selector: (state: GridState) => T): T {
 
   return useSyncExternalStore(
     store.subscribe,
+    getSnapshot,
     getSnapshot
   );
 }
@@ -70,6 +71,7 @@ export function useGridKeySelector<T>(key: string, selector: (state: GridState) 
 
   return useSyncExternalStore(
     subscribe,
+    getSnapshot,
     getSnapshot
   );
 }
@@ -91,7 +93,7 @@ export function useGridCell(row: number, col: number) {
     [store, row, col]
   );
 
-  const cellState = useSyncExternalStore(subscribe, getSnapshot);
+  const cellState = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   return cellState;
 }
