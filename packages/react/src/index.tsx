@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useMemo, useSyncExternalStore } from 'react';
-import { GridStore, GridState, GridNavigationController, GridNavigationOptions } from '@grid-engine/core';
+import { GridStore, GridState, GridNavigationController, GridNavigationOptions, GridApi } from '@grid-engine/core';
 
 // Create Grid Context
 const GridContext = createContext<GridStore | null>(null);
@@ -23,6 +23,10 @@ export function useGridStore(): GridStore {
     throw new Error('useGridStore must be used within a GridProvider');
   }
   return context;
+}
+
+export function useGridApi(): GridApi {
+  return useGridStore();
 }
 
 /**
@@ -113,4 +117,22 @@ export function useGridNavigationController(options: GridNavigationOptions = {})
   }, [store, options]);
 
   return controller;
+}
+
+export interface CellRendererProps {
+  row: number;
+  col: number;
+  value: any;
+  computedValue: any;
+  api: GridApi;
+}
+
+export interface CellEditorProps {
+  row: number;
+  col: number;
+  value: any;
+  onChange: (val: any) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+  api: GridApi;
 }

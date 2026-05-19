@@ -47,4 +47,32 @@ describe('GridStore micro-store functionality', () => {
     expect(cell.computedValue).toBe('');
     expect(cell.isEditing).toBe(false);
   });
+
+  it('should support pluggable events and column resizing updates through GridApi', () => {
+    const store = new GridStore({ rowCount: 5, colCount: 5 });
+    
+    const valueListener = vi.fn();
+    const resizeListener = vi.fn();
+    
+    // Bind listeners
+    store.addEventListener('cellValueChanged', valueListener);
+    store.addEventListener('columnResized', resizeListener);
+    
+    // Act 1: Resize column 1 to 150px
+    store.setColumnWidth(1, 150);
+    expect(store.getState().colWidths[1]).toBe(150);
+    expect(resizeListener).toHaveBeenCalledTimes(1);
+    expect(resizeListener).toHaveBeenCalledWith({
+      type: 'columnResized',
+      payload: { col: 1, width: 150 }
+    });
+    
+    // Act 2: Modify cell value
+    store.setCellValue(0, 1, 'Neon stand');
+    expect(valueListener).toHaveBeenCalledTimes(1);
+    expect(valueListener).toHaveBeenCalledWith({
+      type: 'cellValueChanged',
+      payload: { row: 0, col: 1, oldValue: '', newValue: 'Neon stand' }
+    });
+  });
 });

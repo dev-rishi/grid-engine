@@ -1,21 +1,58 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { GridStore, ServerRowModelController, IGridDatasource, GridCellCoordinate } from '@grid-engine/core';
+import { GridStore, ServerRowModelController, IGridDatasource } from '@grid-engine/core';
 import {
   GridProvider,
   useGridStore,
+  useGridApi,
   useGridSelector,
   useGridCell,
   useCellSelectionState,
   useCellEditState,
-  useGridNavigationController
+  useGridNavigationController,
+  CellEditorProps
 } from '@grid-engine/react';
-import { Cpu, Server, RefreshCw, Zap, TableProperties, HelpCircle, Layers } from 'lucide-react';
+import { Cpu, Server, RefreshCw, Zap, TableProperties, HelpCircle, Layers, Terminal } from 'lucide-react';
+
+// ==========================================
+// A. Custom Status Editor using GridApi
+// ==========================================
+const StatusCellEditor = ({ row, col, value, api }: CellEditorProps) => {
+  return (
+    <select
+      autoFocus
+      value={value}
+      onChange={(e) => {
+        const nextVal = e.target.value;
+        // 1. Programmatically update the cell value
+        api.setCellValue(row, col, nextVal);
+        
+        // 2. Programmatically close editing mode by clearing registers
+        api.setState({ activeEditCell: null, activeEditValue: '' });
+
+        // 3. E2E GridApi control: If status becomes "Inactive", set Price and Qty to 0!
+        if (nextVal === 'Inactive') {
+          api.setCellValue(row, 2, '0');
+          api.setCellValue(row, 3, '0');
+        }
+      }}
+      onBlur={() => {
+        api.setState({ activeEditCell: null, activeEditValue: '' });
+      }}
+      className="absolute inset-0 w-full h-full px-3 text-sm bg-slate-900 text-white border-2 border-purple-500 outline-none z-20 font-medium"
+    >
+      <option value="Active">Active</option>
+      <option value="Pending">Pending</option>
+      <option value="Inactive">Inactive</option>
+    </select>
+  );
+};
 
 // Define our grid column definitions
 interface ColumnDef {
   header: string;
   width: number;
+  cellEditor?: React.ComponentType<CellEditorProps>;
 }
 
 const COLUMNS: ColumnDef[] = [
@@ -24,33 +61,87 @@ const COLUMNS: ColumnDef[] = [
   { header: 'Price ($)', width: 120 },
   { header: 'Quantity', width: 100 },
   { header: 'Subtotal ($)', width: 140 },
-  { header: 'Status', width: 120 },
+  { header: 'Status', width: 120, cellEditor: StatusCellEditor },
 ];
 
 const DEFAULT_ROW_HEIGHT = 38;
 
 // ==========================================
-// 1. High Performance Grid Cell Component
+// B. Interactive Column Resizing Header Cell
+// ==========================================
+interface HeaderCellProps {
+  colIndex: number;
+  header: string;
+  width: number;
+  api: ReturnType<typeof useGridApi>;
+}
+
+const HeaderCell = ({ colIndex, header, width, api }: HeaderCellProps) => {
+  // Subscribe to changes in this column's width
+  const colWidth = useGridSelector((state) => state.colWidths[colIndex] ?? width);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const startX = e.clientX;
+    const startWidth = colWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const nextWidth = Math.max(60, startWidth + deltaX);
+      api.setColumnWidth(colIndex, nextWidth);
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  return (
+    <div
+      className="flex items-center justify-between px-3 h-10 border-r border-slate-800 text-xs font-semibold text-slate-400 uppercase tracking-wider relative group"
+      style={{ width: colWidth }}
+    >
+      <span className="truncate select-none">{header}</span>
+      {/* Dynamic Glow Handle for drag-resizing */}
+      <div
+        onMouseDown={handleMouseDown}
+        className="absolute right-0 top-0 w-1.5 h-full cursor-col-resize hover:bg-purple-500/80 bg-slate-800 transition-colors duration-150 z-20 group-hover:bg-slate-700"
+      />
+    </div>
+  );
+};
+
+// ==========================================
+// C. High Performance Grid Cell Component
 // ==========================================
 interface CellProps {
   row: number;
   col: number;
-  colWidth: number;
   navigation: ReturnType<typeof useGridNavigationController>;
 }
 
-const Cell = React.memo(({ row, col, colWidth, navigation }: CellProps) => {
+const Cell = React.memo(({ row, col, navigation }: CellProps) => {
   const cellState = useGridCell(row, col);
   const { isFocused, isSelected } = useCellSelectionState(row, col);
   const { isEditing, value, setValue } = useCellEditState(row, col);
+  const api = useGridApi();
+
+  // Granular subscription to column width changes
+  const colWidth = useGridSelector((state) => state.colWidths[col] ?? COLUMNS[col].width);
 
   // Generate CSS styling based on coordinate states
   const cellClassName = useMemo(() => {
     let classes = 'flex items-center px-3 h-full border-r border-slate-800 text-sm select-none relative transition-colors duration-75 ';
     if (isFocused) {
-      classes += 'bg-slate-900 border-2 border-blue-500 z-10 ';
+      classes += 'bg-slate-900 border-2 border-purple-500 z-10 ';
     } else if (isSelected) {
-      classes += 'bg-blue-500/10 ';
+      classes += 'bg-purple-500/10 ';
     } else {
       classes += 'bg-slate-950 text-slate-300 ';
     }
@@ -65,6 +156,8 @@ const Cell = React.memo(({ row, col, colWidth, navigation }: CellProps) => {
     return classes;
   }, [isFocused, isSelected, col, cellState.value]);
 
+  const CustomEditor = COLUMNS[col].cellEditor;
+
   return (
     <div
       className={cellClassName}
@@ -73,13 +166,23 @@ const Cell = React.memo(({ row, col, colWidth, navigation }: CellProps) => {
       onMouseEnter={() => navigation.handleMouseEnter(row, col)}
     >
       {isEditing ? (
-        <input
-          autoFocus
-          className="absolute inset-0 w-full h-full px-3 text-sm bg-slate-900 text-white border-2 border-blue-500 outline-none z-20"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onBlur={() => navigation.handleMouseDown(row, col, new MouseEvent('mousedown'))}
-        />
+        CustomEditor ? (
+          <CustomEditor
+            row={row}
+            col={col}
+            value={value}
+            onChange={(val) => setValue(val)}
+            api={api}
+          />
+        ) : (
+          <input
+            autoFocus
+            className="absolute inset-0 w-full h-full px-3 text-sm bg-slate-900 text-white border-2 border-purple-500 outline-none z-20"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={() => navigation.handleMouseDown(row, col, new MouseEvent('mousedown'))}
+          />
+        )
       ) : (
         <span className="truncate">
           {cellState.computedValue ?? cellState.value}
@@ -92,7 +195,7 @@ const Cell = React.memo(({ row, col, colWidth, navigation }: CellProps) => {
 Cell.displayName = 'Cell';
 
 // ==========================================
-// 2. High Performance Grid Body
+// D. High Performance Grid Body
 // ==========================================
 interface GridViewProps {
   rowCount: number;
@@ -104,6 +207,7 @@ interface GridViewProps {
 function GridView({ rowCount, rowHeights, onCellValueChanged, serverController }: GridViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const store = useGridStore();
+  const api = useGridApi();
   const navigation = useGridNavigationController({ onCellValueChanged });
 
   // Keyboard navigation attachment
@@ -131,8 +235,6 @@ function GridView({ rowCount, rowHeights, onCellValueChanged, serverController }
     overscan: 10,
   });
 
-  const totalWidth = COLUMNS.reduce((sum, col) => sum + col.width, 0);
-
   // If server row model controller exists, trigger fetching on scroll window viewport
   const virtualRows = rowVirtualizer.getVirtualItems();
   useEffect(() => {
@@ -148,13 +250,13 @@ function GridView({ rowCount, rowHeights, onCellValueChanged, serverController }
       {/* Sticky Table Header */}
       <div className="flex bg-slate-900 border-b border-slate-800 shrink-0 select-none z-10">
         {COLUMNS.map((col, i) => (
-          <div
+          <HeaderCell
             key={i}
-            className="flex items-center px-3 h-10 border-r border-slate-800 text-xs font-semibold text-slate-400 uppercase tracking-wider"
-            style={{ width: col.width }}
-          >
-            {col.header}
-          </div>
+            colIndex={i}
+            header={col.header}
+            width={col.width}
+            api={api}
+          />
         ))}
       </div>
 
@@ -214,12 +316,11 @@ function GridView({ rowCount, rowHeights, onCellValueChanged, serverController }
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
-                {COLUMNS.map((col, colIndex) => (
+                {COLUMNS.map((_, colIndex) => (
                   <Cell
                     key={colIndex}
                     row={rowIndex}
                     col={colIndex}
-                    colWidth={col.width}
                     navigation={navigation}
                   />
                 ))}
@@ -233,11 +334,12 @@ function GridView({ rowCount, rowHeights, onCellValueChanged, serverController }
 }
 
 // ==========================================
-// 3. Main Dashboard Application
+// E. Main Dashboard Application
 // ==========================================
 export default function App() {
   const [activeTab, setActiveTab] = useState<'client' | 'server'>('client');
   const [gridStateInfo, setGridStateInfo] = useState<string>('Focused: None | Selected: None');
+  const [eventLogs, setEventLogs] = useState<string[]>([]);
 
   // A. Create Client-Side Grid Instance
   const clientStore = useMemo(() => {
@@ -294,7 +396,7 @@ export default function App() {
     });
   }, []);
 
-  // Generate remote paginated datasource with simulated 500ms block loading delay
+  // Generate remote paginated datasource with simulated 450ms block loading delay
   const mockDatasource = useMemo<IGridDatasource>(() => {
     const products = ['Neon Controller', 'Haptic Earphone', 'VR Headset', 'Smart Mug', 'RGB Cable', 'Cozy Blanket'];
     const statuses = ['Active', 'Pending', 'Inactive'];
@@ -338,11 +440,12 @@ export default function App() {
     });
   }, [serverStore, mockDatasource]);
 
-  // Hook into active store selection boundaries to display performance statistics
+  // Dynamic E2E Core Event listeners hook
   useEffect(() => {
     const store = activeTab === 'client' ? clientStore : serverStore;
     
-    const unsubscribe = store.subscribe((state) => {
+    // State log updates
+    const unsubscribeState = store.subscribe((state) => {
       const focus = state.focusedCell;
       const range = state.selectedRange;
       
@@ -354,7 +457,39 @@ export default function App() {
       setGridStateInfo(`Focused Cell: ${focusText} | Selected Range: ${rangeText}`);
     });
 
-    return unsubscribe;
+    // Custom Event log emitter bindings
+    const formatLog = (name: string, payload: any) => {
+      const time = new Date().toLocaleTimeString();
+      return `[${time}] ${name} -> ${JSON.stringify(payload)}`;
+    };
+
+    const addLog = (msg: string) => {
+      setEventLogs((prev) => [msg, ...prev].slice(0, 40));
+    };
+
+    const unsubValue = store.addEventListener('cellValueChanged', (e) => {
+      addLog(formatLog('cellValueChanged', e.payload));
+    });
+
+    const unsubResize = store.addEventListener('columnResized', (e) => {
+      addLog(formatLog('columnResized', e.payload));
+    });
+
+    const unsubFocus = store.addEventListener('focusChanged', (e) => {
+      addLog(formatLog('focusChanged', e.payload));
+    });
+
+    const unsubSelect = store.addEventListener('selectionChanged', (e) => {
+      addLog(formatLog('selectionChanged', e.payload));
+    });
+
+    return () => {
+      unsubscribeState();
+      unsubValue();
+      unsubResize();
+      unsubFocus();
+      unsubSelect();
+    };
   }, [activeTab, clientStore, serverStore]);
 
   return (
@@ -363,18 +498,18 @@ export default function App() {
       <header className="flex flex-col md:flex-row items-start md:items-center justify-between pb-6 border-b border-slate-900 gap-4 shrink-0">
         <div>
           <div className="flex items-center gap-3">
-            <span className="p-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+            <span className="p-2 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20">
               <Zap className="w-6 h-6 animate-pulse" />
             </span>
             <h1 className="text-2xl font-bold bg-gradient-to-r from-white via-slate-200 to-slate-500 bg-clip-text text-transparent">
               Headless Grid Engine
             </h1>
             <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
-              v1.0.0
+              v2.0.0
             </span>
           </div>
           <p className="text-sm text-slate-400 mt-1 max-w-xl">
-            A high-performance unstyled spreadsheet hook set built on targeted coordinate bindings and WAI-ARIA keyboard navigation models.
+            A high-performance modular spreadsheet engine core. Upgrade features include interactive resizing, pluggable events, and custom editors.
           </p>
         </div>
 
@@ -384,7 +519,7 @@ export default function App() {
             onClick={() => setActiveTab('client')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
               activeTab === 'client'
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
             }`}
           >
@@ -395,7 +530,7 @@ export default function App() {
             onClick={() => setActiveTab('server')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
               activeTab === 'server'
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
             }`}
           >
@@ -434,15 +569,34 @@ export default function App() {
           {/* Active coordinate coordinates indicator */}
           <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-3">
             <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <TableProperties className="w-4 h-4 text-blue-400" />
+              <TableProperties className="w-4 h-4 text-purple-400" />
               State Inspector
             </h3>
-            <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-blue-400 leading-relaxed break-all">
+            <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-purple-400 leading-relaxed break-all">
               {gridStateInfo}
             </div>
             <p className="text-slate-500 text-[10px] leading-relaxed">
               * Cell coordinates reflect absolute indexes in memory. Updates bypass React's virtual DOM tree using targeted micro-subscriptions to maximize rendering framerate.
             </p>
+          </div>
+
+          {/* Premium Pluggable Live Event Log Panel */}
+          <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-3 h-64 min-h-0">
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 shrink-0">
+              <Terminal className="w-4 h-4 text-emerald-400" />
+              Live Core Event Log
+            </h3>
+            <div className="flex-1 min-h-0 overflow-y-auto p-3 bg-slate-950 border border-slate-850 rounded-lg font-mono text-[10px] text-slate-300 leading-relaxed flex flex-col gap-1">
+              {eventLogs.length === 0 ? (
+                <span className="text-slate-600 italic">No events emitted yet. Interact with the grid (resize, select, double click status, edit Price) to broadcast events...</span>
+              ) : (
+                eventLogs.map((log, index) => (
+                  <div key={index} className="truncate border-b border-slate-900 pb-1 text-slate-400">
+                    <span className="text-emerald-400">{log.split(' -> ')[0]}</span> {"->"} {log.split(' -> ')[1]}
+                  </div>
+                ))
+              )}
+            </div>
           </div>
 
           {/* Quick interactive utility scripts */}
@@ -472,7 +626,7 @@ export default function App() {
                   Reset Client Prices to Zero
                 </button>
                 <div className="p-3 bg-slate-950 border border-slate-900 rounded-lg text-slate-400 text-xs leading-relaxed">
-                  <strong>Client Formulas</strong>: Edits in columns <strong>Price</strong> or <strong>Quantity</strong> immediately evaluate subtotal formula calculations on value commit.
+                  <strong>Status Editor Side-Effect</strong>: Changing Status to <strong>Inactive</strong> programmatically sets Price and Quantity to 0 for that row!
                 </div>
               </div>
             ) : (
@@ -502,27 +656,27 @@ export default function App() {
             <ul className="text-slate-400 text-xs leading-relaxed flex flex-col gap-2 font-medium">
               <li className="flex justify-between border-b border-slate-900 pb-1.5">
                 <span>Navigate Cells</span>
-                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-blue-400 text-[10px]">Arrow Keys</span>
+                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-purple-400 text-[10px]">Arrow Keys</span>
               </li>
               <li className="flex justify-between border-b border-slate-900 pb-1.5">
                 <span>Expand Range</span>
-                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-blue-400 text-[10px]">Shift + Arrows</span>
+                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-purple-400 text-[10px]">Shift + Arrows</span>
               </li>
               <li className="flex justify-between border-b border-slate-900 pb-1.5">
                 <span>Enter Edit Mode</span>
-                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-blue-400 text-[10px]">Enter or Double Click</span>
+                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-purple-400 text-[10px]">Enter or Double Click</span>
               </li>
               <li className="flex justify-between border-b border-slate-900 pb-1.5">
                 <span>Immediate Type</span>
-                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-blue-400 text-[10px]">Any Key</span>
+                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-purple-400 text-[10px]">Any Key</span>
               </li>
               <li className="flex justify-between border-b border-slate-900 pb-1.5">
                 <span>Commit & Down</span>
-                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-blue-400 text-[10px]">Enter</span>
+                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-purple-400 text-[10px]">Enter</span>
               </li>
               <li className="flex justify-between pb-0.5">
                 <span>Cancel & Revert</span>
-                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-blue-400 text-[10px]">Escape</span>
+                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-purple-400 text-[10px]">Escape</span>
               </li>
             </ul>
           </div>

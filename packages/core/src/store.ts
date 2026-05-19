@@ -14,6 +14,13 @@ export interface CellState {
   isEditing?: boolean;
 }
 
+export interface GridEvent<T = any> {
+  type: string;
+  payload: T;
+}
+
+export type GridEventListener<T = any> = (event: GridEvent<T>) => void;
+
 export interface GridState {
   rowCount: number;
   colCount: number;
@@ -33,16 +40,34 @@ export interface GridState {
   // Active edit state registers
   activeEditCell: GridCellCoordinate | null;
   activeEditValue: string;
+
+  // Sorting & Filtering State
+  sortModel: any;
+  filterModel: any;
 }
 
 export type GridStateUpdater = Partial<GridState> | ((state: GridState) => Partial<GridState>);
 
 export type Listener = (state: GridState) => void;
 
-export class GridStore {
+export interface GridApi {
+  getState(): GridState;
+  setState(updater: GridStateUpdater): void;
+  setCellValue(row: number, col: number, value: any, computedValue?: any): void;
+  getCellState(row: number, col: number): CellState;
+  setFocusedCell(row: number | null, col: number | null): void;
+  setSelectedRange(start: GridCellCoordinate | null, end: GridCellCoordinate | null): void;
+  setColumnWidth(col: number, width: number): void;
+  setRowHeight(row: number, height: number): void;
+  addEventListener<T = any>(type: string, callback: GridEventListener<T>): () => void;
+  dispatchEvent<T = any>(type: string, payload: T): void;
+}
+
+export class GridStore implements GridApi {
   private state: GridState;
   private listeners = new Set<Listener>();
   private keyListeners = new Map<string, Set<Listener>>();
+  private eventListeners = new Map<string, Set<GridEventListener>>();
 
   constructor(initialState: Partial<GridState> = {}) {
     this.state = {
@@ -60,6 +85,8 @@ export class GridStore {
       rowModelType: 'client',
       activeEditCell: null,
       activeEditValue: '',
+      sortModel: null,
+      filterModel: null,
       ...initialState,
     };
   }
@@ -112,6 +139,20 @@ export class GridStore {
         targeted.forEach((listener) => listener(this.state));
       }
     });
+
+    // Auto-dispatch structured core events
+    if (updatedKeys.has('focusedCell')) {
+      this.dispatchEvent('focusChanged', { focusedCell: this.state.focusedCell });
+    }
+    if (updatedKeys.has('selectedRange')) {
+      this.dispatchEvent('selectionChanged', { selectedRange: this.state.selectedRange });
+    }
+    if (updatedKeys.has('sortModel')) {
+      this.dispatchEvent('sortChanged', { sortModel: this.state.sortModel });
+    }
+    if (updatedKeys.has('filterModel')) {
+      this.dispatchEvent('filterChanged', { filterModel: this.state.filterModel });
+    }
   };
 
   /**
@@ -144,10 +185,44 @@ export class GridStore {
   };
 
   /**
-   * Helper to set value of a single cell.
+   * Extensible Event System Methods
+   */
+  public addEventListener = <T = any>(type: string, callback: GridEventListener<T>): (() => void) => {
+    if (!this.eventListeners.has(type)) {
+      this.eventListeners.set(type, new Set());
+    }
+    const set = this.eventListeners.get(type)!;
+    set.add(callback as GridEventListener);
+    return () => {
+      set.delete(callback as GridEventListener);
+      if (set.size === 0) {
+        this.eventListeners.delete(type);
+      }
+    };
+  };
+
+  public dispatchEvent = <T = any>(type: string, payload: T): void => {
+    const set = this.eventListeners.get(type);
+    if (set) {
+      const event: GridEvent<T> = { type, payload };
+      set.forEach((listener) => {
+        try {
+          listener(event);
+        } catch (e) {
+          console.error(`GridEngine: Error in event listener for "${type}"`, e);
+        }
+      });
+    }
+  };
+
+  /**
+   * Helper to set value of a single cell and trigger cellValueChanged.
    */
   public setCellValue = (row: number, col: number, value: any, computedValue?: any): void => {
     const key = `${row},${col}`;
+    const oldState = this.getCellState(row, col);
+    const oldValue = oldState.value;
+
     this.setState((state) => ({
       cells: {
         ...state.cells,
@@ -158,6 +233,14 @@ export class GridStore {
         },
       },
     }));
+
+    // Trigger pluggable cellValueChanged event
+    this.dispatchEvent('cellValueChanged', {
+      row,
+      col,
+      oldValue,
+      newValue: value,
+    });
   };
 
   /**
@@ -165,5 +248,69 @@ export class GridStore {
    */
   public getCellState = (row: number, col: number): CellState => {
     return this.state.cells[`${row},${col}`] || { value: '', computedValue: '', isEditing: false };
+  };
+
+  /**
+   * Helper to set focused cell and trigger focusChanged.
+   */
+  public setFocusedCell = (row: number | null, col: number | null): void => {
+    const nextFocus = (row !== null && col !== null) ? { row, col } : null;
+    
+    this.setState({
+      focusedCell: nextFocus,
+    });
+
+    this.dispatchEvent('focusChanged', {
+      focusedCell: nextFocus,
+    });
+  };
+
+  /**
+   * Helper to set selection range and trigger selectionChanged.
+   */
+  public setSelectedRange = (start: GridCellCoordinate | null, end: GridCellCoordinate | null): void => {
+    const nextRange = (start !== null && end !== null) ? { start, end } : null;
+
+    this.setState({
+      selectedRange: nextRange,
+    });
+
+    this.dispatchEvent('selectionChanged', {
+      selectedRange: nextRange,
+    });
+  };
+
+  /**
+   * Helper to set column width and trigger columnResized.
+   */
+  public setColumnWidth = (col: number, width: number): void => {
+    this.setState((state) => ({
+      colWidths: {
+        ...state.colWidths,
+        [col]: width,
+      },
+    }));
+
+    this.dispatchEvent('columnResized', {
+      col,
+      width,
+    });
+  };
+
+  /**
+   * Helper to set row height and trigger rowResized.
+   */
+  public setRowHeight = (row: number, height: number): void => {
+    this.setState((state) => ({
+      rowHeights: {
+        ...state.rowHeights,
+        [row]: height,
+      },
+    }));
+
+    this.dispatchEvent('rowResized', {
+      row,
+      height,
+    });
   };
 }
