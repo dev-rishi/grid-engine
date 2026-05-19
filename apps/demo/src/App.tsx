@@ -10,7 +10,8 @@ import {
   useCellSelectionState,
   useCellEditState,
   useGridNavigationController,
-  CellEditorProps
+  CellEditorProps,
+  Cell as ReactCell
 } from '@grid-engine/react';
 import { Cpu, Server, RefreshCw, Zap, TableProperties, HelpCircle, Layers, Terminal, Keyboard } from 'lucide-react';
 
@@ -134,109 +135,28 @@ interface CellProps {
 }
 
 const Cell = React.memo(({ row, col, navigation }: CellProps) => {
-  const cellRef = useRef<HTMLDivElement>(null);
-  const cellState = useGridCell(row, col);
-  const { isFocused, isSelected } = useCellSelectionState(row, col);
-  const { isEditing, value, setValue } = useCellEditState(row, col);
-  const api = useGridApi();
+  const customEditor = COLUMNS[col].cellEditor;
 
-  // Focus synchronization effect
-  useEffect(() => {
-    if (isFocused && !isEditing) {
-      const gridContainer = cellRef.current?.closest('[tabindex]');
-      if (document.activeElement === document.body || (gridContainer && gridContainer.contains(document.activeElement))) {
-        console.log('[GridEngine] Focusing cell DOM element coordinates:', row, col);
-        cellRef.current?.focus();
-      }
-    }
-  }, [isFocused, isEditing, row, col]);
-
-  // Granular subscription to column width changes
-  const colWidth = useGridSelector((state) => state.colWidths[col] ?? COLUMNS[col].width);
-
-  // Generate CSS styling based on coordinate states
-  const cellClassName = useMemo(() => {
-    let classes = 'flex items-center px-3 h-full border-r border-slate-800 text-sm select-none relative transition-colors duration-75 outline-none ';
-    if (isFocused) {
-      classes += 'bg-slate-900 border-2 border-purple-500 z-10 ';
-    } else if (isSelected) {
-      classes += 'bg-purple-500/10 ';
-    } else {
-      classes += 'bg-slate-950 text-slate-300 ';
-    }
-    
-    // Status column colors
+  // Custom cell formatting for Status (col index 5)
+  const renderValue = useCallback((value: any, computedValue: any) => {
     if (col === 5) {
-      if (cellState.value === 'Active') classes += 'text-emerald-400 font-medium';
-      if (cellState.value === 'Pending') classes += 'text-amber-400 font-medium';
-      if (cellState.value === 'Inactive') classes += 'text-slate-500 font-medium';
+      const colorClass = 
+        value === 'Active' ? 'text-emerald-400 font-medium' :
+        value === 'Pending' ? 'text-amber-400 font-medium' :
+        'text-slate-500 font-medium';
+      return <span className={`truncate ${colorClass}`}>{computedValue ?? value}</span>;
     }
-    
-    return classes;
-  }, [isFocused, isSelected, col, cellState.value]);
-
-  const CustomEditor = COLUMNS[col].cellEditor;
+    return <span className="truncate">{computedValue ?? value}</span>;
+  }, [col]);
 
   return (
-    <div
-      ref={cellRef}
-      className={cellClassName}
-      style={{ width: colWidth }}
-      tabIndex={-1}
-      onMouseDown={(e) => {
-        if (isEditing) {
-          console.log('[GridEngine] Cell MouseDown IGNORED because isEditing is active');
-          return;
-        }
-        console.log('[GridEngine] Cell MouseDown focusing cell coordinates:', row, col);
-        e.currentTarget.focus();
-        navigation.handleMouseDown(row, col, e.nativeEvent);
-      }}
-      onMouseEnter={() => navigation.handleMouseEnter(row, col)}
-      onDoubleClick={(e) => {
-        if (isEditing) return;
-        console.log('[GridEngine] Cell DoubleClick entering edit mode coordinates:', row, col);
-        navigation.setCellEditing(row, col, true);
-      }}
-    >
-      {isEditing ? (
-        CustomEditor ? (
-          <CustomEditor
-            row={row}
-            col={col}
-            value={value}
-            onChange={(val) => setValue(val)}
-            api={api}
-          />
-        ) : (
-          <input
-            autoFocus
-            className="absolute inset-0 w-full h-full px-3 text-sm bg-slate-900 text-white border-2 border-purple-500 outline-none z-20"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onMouseDown={(e) => e.stopPropagation()}
-            onDoubleClick={(e) => e.stopPropagation()}
-            onBlur={() => {
-              // Delay blur commit slightly to avoid transient double-click focus races
-              setTimeout(() => {
-                navigation.commitEdit(row, col);
-              }, 150);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                navigation.commitEdit(row, col);
-              } else if (e.key === 'Escape') {
-                navigation.cancelEdit(row, col);
-              }
-            }}
-          />
-        )
-      ) : (
-        <span className="truncate">
-          {cellState.computedValue ?? cellState.value}
-        </span>
-      )}
-    </div>
+    <ReactCell
+      row={row}
+      col={col}
+      navigation={navigation}
+      customEditor={customEditor}
+      renderValue={renderValue}
+    />
   );
 });
 
