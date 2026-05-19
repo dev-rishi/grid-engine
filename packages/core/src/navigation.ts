@@ -2,6 +2,8 @@ import { GridStore, GridCellCoordinate } from './store.js';
 
 export interface GridNavigationOptions {
   onCellValueChanged?: (row: number, col: number, val: any) => void;
+  editTrigger?: 'singleClick' | 'doubleClick'; // default: 'doubleClick'
+  arrowKeyNavigationEdit?: boolean; // default: false
 }
 
 export class GridNavigationController {
@@ -19,8 +21,10 @@ export class GridNavigationController {
    * Handle standard keyboard movements and selection expansions.
    */
   public handleKeyDown = (event: KeyboardEvent): void => {
+    console.log('[GridEngine] handleKeyDown event:', event.key);
     const state = this.store.getState();
     const active = state.focusedCell;
+    console.log('[GridEngine] focusedCell state:', active);
     if (!active) return;
 
     const row = active.row;
@@ -109,12 +113,69 @@ export class GridNavigationController {
             focusedCell: { row: nextRow, col: nextCol },
             selectedRange: { start: { row: nextRow, col: nextCol }, end: { row: nextRow, col: nextCol } }
           });
+
+          // Opt-in: Auto-edit on arrow key navigation
+          if (this.options.arrowKeyNavigationEdit) {
+            this.setCellEditing(nextRow, nextCol, true);
+          }
         }
       }
     } 
     // 2. Keyboard handling when IN editing mode
     else {
       switch (event.key) {
+        case 'ArrowUp':
+          event.preventDefault();
+          this.commitEdit(row, col);
+          const upRow = Math.max(0, row - 1);
+          this.rangeStart = { row: upRow, col };
+          this.store.setState({
+            focusedCell: { row: upRow, col },
+            selectedRange: { start: { row: upRow, col }, end: { row: upRow, col } }
+          });
+          if (this.options.arrowKeyNavigationEdit) {
+            this.setCellEditing(upRow, col, true);
+          }
+          break;
+        case 'ArrowDown':
+          event.preventDefault();
+          this.commitEdit(row, col);
+          const downRow = Math.min(maxRow, row + 1);
+          this.rangeStart = { row: downRow, col };
+          this.store.setState({
+            focusedCell: { row: downRow, col },
+            selectedRange: { start: { row: downRow, col }, end: { row: downRow, col } }
+          });
+          if (this.options.arrowKeyNavigationEdit) {
+            this.setCellEditing(downRow, col, true);
+          }
+          break;
+        case 'ArrowLeft':
+          event.preventDefault();
+          this.commitEdit(row, col);
+          const leftCol = Math.max(0, col - 1);
+          this.rangeStart = { row, col: leftCol };
+          this.store.setState({
+            focusedCell: { row, col: leftCol },
+            selectedRange: { start: { row, col: leftCol }, end: { row, col: leftCol } }
+          });
+          if (this.options.arrowKeyNavigationEdit) {
+            this.setCellEditing(row, leftCol, true);
+          }
+          break;
+        case 'ArrowRight':
+          event.preventDefault();
+          this.commitEdit(row, col);
+          const rightCol = Math.min(maxCol, col + 1);
+          this.rangeStart = { row, col: rightCol };
+          this.store.setState({
+            focusedCell: { row, col: rightCol },
+            selectedRange: { start: { row, col: rightCol }, end: { row, col: rightCol } }
+          });
+          if (this.options.arrowKeyNavigationEdit) {
+            this.setCellEditing(row, rightCol, true);
+          }
+          break;
         case 'Enter':
           event.preventDefault();
           // Commit and move down
@@ -125,6 +186,10 @@ export class GridNavigationController {
             focusedCell: { row: nextRow, col },
             selectedRange: { start: { row: nextRow, col }, end: { row: nextRow, col } }
           });
+          // Opt-in: Auto-edit on enter movement
+          if (this.options.arrowKeyNavigationEdit) {
+            this.setCellEditing(nextRow, col, true);
+          }
           break;
         case 'Tab':
           event.preventDefault();
@@ -136,6 +201,10 @@ export class GridNavigationController {
             focusedCell: { row, col: nextCol },
             selectedRange: { start: { row, col: nextCol }, end: { row, col: nextCol } }
           });
+          // Opt-in: Auto-edit on tab movement
+          if (this.options.arrowKeyNavigationEdit) {
+            this.setCellEditing(row, nextCol, true);
+          }
           break;
         case 'Escape':
           event.preventDefault();
@@ -155,12 +224,27 @@ export class GridNavigationController {
     
     const state = this.store.getState();
     const prevFocus = state.focusedCell;
+    const trigger = this.options.editTrigger ?? 'doubleClick';
     
-    // If double click, enter edit mode
-    if (event.detail === 2) {
+    // Handle singleClick edit trigger
+    if (trigger === 'singleClick') {
+      if (prevFocus && (prevFocus.row !== row || prevFocus.col !== col)) {
+        const prevCellState = this.store.getCellState(prevFocus.row, prevFocus.col);
+        if (prevCellState.isEditing) {
+          this.commitEdit(prevFocus.row, prevFocus.col);
+        }
+      }
+      this.isSelecting = true;
+      this.rangeStart = { row, col };
+      this.store.setState({
+        focusedCell: { row, col },
+        selectedRange: { start: { row, col }, end: { row, col } }
+      });
       this.setCellEditing(row, col, true);
       return;
     }
+
+    // In doubleClick trigger, double-click is safely isolated inside React's onDoubleClick event to prevent focus races.
 
     // If focused on another cell, save its edit first
     if (prevFocus && (prevFocus.row !== row || prevFocus.col !== col)) {

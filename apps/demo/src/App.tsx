@@ -12,7 +12,7 @@ import {
   useGridNavigationController,
   CellEditorProps
 } from '@grid-engine/react';
-import { Cpu, Server, RefreshCw, Zap, TableProperties, HelpCircle, Layers, Terminal } from 'lucide-react';
+import { Cpu, Server, RefreshCw, Zap, TableProperties, HelpCircle, Layers, Terminal, Keyboard } from 'lucide-react';
 
 // ==========================================
 // A. Custom Status Editor using GridApi
@@ -36,10 +36,15 @@ const StatusCellEditor = ({ row, col, value, api }: CellEditorProps) => {
           api.setCellValue(row, 3, '0');
         }
       }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
       onBlur={() => {
-        api.setState({ activeEditCell: null, activeEditValue: '' });
+        // Delay blur closure slightly to avoid double-click focus races
+        setTimeout(() => {
+          api.setState({ activeEditCell: null, activeEditValue: '' });
+        }, 150);
       }}
-      className="absolute inset-0 w-full h-full px-3 text-sm bg-slate-900 text-white border-2 border-purple-500 outline-none z-20 font-medium"
+      className="absolute inset-0 w-full h-full px-3 text-sm bg-slate-900 text-white border-2 border-purple-500 outline-none z-20 font-medium cursor-pointer"
     >
       <option value="Active">Active</option>
       <option value="Pending">Pending</option>
@@ -127,17 +132,29 @@ interface CellProps {
 }
 
 const Cell = React.memo(({ row, col, navigation }: CellProps) => {
+  const cellRef = useRef<HTMLDivElement>(null);
   const cellState = useGridCell(row, col);
   const { isFocused, isSelected } = useCellSelectionState(row, col);
   const { isEditing, value, setValue } = useCellEditState(row, col);
   const api = useGridApi();
+
+  // Focus synchronization effect
+  useEffect(() => {
+    if (isFocused && !isEditing) {
+      const gridContainer = cellRef.current?.closest('[tabindex]');
+      if (document.activeElement === document.body || (gridContainer && gridContainer.contains(document.activeElement))) {
+        console.log('[GridEngine] Focusing cell DOM element coordinates:', row, col);
+        cellRef.current?.focus();
+      }
+    }
+  }, [isFocused, isEditing, row, col]);
 
   // Granular subscription to column width changes
   const colWidth = useGridSelector((state) => state.colWidths[col] ?? COLUMNS[col].width);
 
   // Generate CSS styling based on coordinate states
   const cellClassName = useMemo(() => {
-    let classes = 'flex items-center px-3 h-full border-r border-slate-800 text-sm select-none relative transition-colors duration-75 ';
+    let classes = 'flex items-center px-3 h-full border-r border-slate-800 text-sm select-none relative transition-colors duration-75 outline-none ';
     if (isFocused) {
       classes += 'bg-slate-900 border-2 border-purple-500 z-10 ';
     } else if (isSelected) {
@@ -160,16 +177,25 @@ const Cell = React.memo(({ row, col, navigation }: CellProps) => {
 
   return (
     <div
+      ref={cellRef}
       className={cellClassName}
       style={{ width: colWidth }}
+      tabIndex={-1}
       onMouseDown={(e) => {
-        // Focus the grid container to ensure keyboard capture
-        const gridContainer = e.currentTarget.closest('[tabindex="0"]') as HTMLElement;
-        gridContainer?.focus();
+        if (isEditing) {
+          console.log('[GridEngine] Cell MouseDown IGNORED because isEditing is active');
+          return;
+        }
+        console.log('[GridEngine] Cell MouseDown focusing cell coordinates:', row, col);
+        e.currentTarget.focus();
         navigation.handleMouseDown(row, col, e.nativeEvent);
       }}
       onMouseEnter={() => navigation.handleMouseEnter(row, col)}
-      onDoubleClick={() => navigation.setCellEditing(row, col, true)}
+      onDoubleClick={(e) => {
+        if (isEditing) return;
+        console.log('[GridEngine] Cell DoubleClick entering edit mode coordinates:', row, col);
+        navigation.setCellEditing(row, col, true);
+      }}
     >
       {isEditing ? (
         CustomEditor ? (
@@ -222,20 +248,36 @@ interface GridViewProps {
   rowHeights: Record<number, number>;
   onCellValueChanged: (row: number, col: number, val: any) => void;
   serverController?: ServerRowModelController;
+  editTrigger?: 'singleClick' | 'doubleClick';
+  arrowKeyNavigationEdit?: boolean;
 }
 
-function GridView({ rowCount, rowHeights, onCellValueChanged, serverController }: GridViewProps) {
+function GridView({ 
+  rowCount, 
+  rowHeights, 
+  onCellValueChanged, 
+  serverController,
+  editTrigger = 'doubleClick',
+  arrowKeyNavigationEdit = false
+}: GridViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const store = useGridStore();
   const api = useGridApi();
-  const navigation = useGridNavigationController({ onCellValueChanged });
+  const navigation = useGridNavigationController({ 
+    onCellValueChanged,
+    editTrigger,
+    arrowKeyNavigationEdit
+  });
 
   // Keyboard navigation attachment
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      console.log('[GridEngine] handleGlobalKeyDown e.key:', e.key, 'activeElement:', document.activeElement);
       // Only capture keyboard if focusing inside grid or body
       if (document.activeElement === document.body || containerRef.current?.contains(document.activeElement)) {
         navigation.handleKeyDown(e);
+      } else {
+        console.log('[GridEngine] e.key IGNORED: activeElement is outside grid:', document.activeElement);
       }
     };
 
@@ -360,6 +402,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'client' | 'server'>('client');
   const [gridStateInfo, setGridStateInfo] = useState<string>('Focused: None | Selected: None');
   const [eventLogs, setEventLogs] = useState<string[]>([]);
+  const [editTrigger, setEditTrigger] = useState<'singleClick' | 'doubleClick'>('doubleClick');
+  const [arrowKeyNavigationEdit, setArrowKeyNavigationEdit] = useState<boolean>(false);
 
   // A. Create Client-Side Grid Instance
   const clientStore = useMemo(() => {
@@ -570,6 +614,8 @@ export default function App() {
                 rowCount={10000}
                 rowHeights={{}}
                 onCellValueChanged={handleClientCellValueChanged}
+                editTrigger={editTrigger}
+                arrowKeyNavigationEdit={arrowKeyNavigationEdit}
               />
             </GridProvider>
           ) : (
@@ -579,6 +625,8 @@ export default function App() {
                 rowHeights={{}}
                 onCellValueChanged={() => {}}
                 serverController={serverController}
+                editTrigger={editTrigger}
+                arrowKeyNavigationEdit={arrowKeyNavigationEdit}
               />
             </GridProvider>
           )}
@@ -598,6 +646,43 @@ export default function App() {
             <p className="text-slate-500 text-[10px] leading-relaxed">
               * Cell coordinates reflect absolute indexes in memory. Updates bypass React's virtual DOM tree using targeted micro-subscriptions to maximize rendering framerate.
             </p>
+          </div>
+
+          {/* Pluggable Accessibility Configuration Options */}
+          <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-4 shrink-0">
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Keyboard className="w-4 h-4 text-purple-400" />
+              Grid Accessibility
+            </h3>
+            
+            <div className="flex flex-col gap-3.5">
+              {/* Edit Trigger Mode Dropdown */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">Edit Trigger</label>
+                <select
+                  value={editTrigger}
+                  onChange={(e) => setEditTrigger(e.target.value as 'singleClick' | 'doubleClick')}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 outline-none focus:border-purple-500 transition-all font-sans font-semibold cursor-pointer"
+                >
+                  <option value="doubleClick">Double-Click to Edit (Excel)</option>
+                  <option value="singleClick">Single-Click to Edit</option>
+                </select>
+              </div>
+
+              {/* Arrow Key Navigation Auto-Edit Checkbox */}
+              <label className="flex items-center gap-2.5 p-2 rounded-lg bg-slate-950/60 border border-slate-900 hover:border-slate-800 cursor-pointer select-none transition-all">
+                <input
+                  type="checkbox"
+                  checked={arrowKeyNavigationEdit}
+                  onChange={(e) => setArrowKeyNavigationEdit(e.target.checked)}
+                  className="rounded border-slate-800 text-purple-600 focus:ring-purple-500/20 w-3.5 h-3.5 bg-slate-950 cursor-pointer"
+                />
+                <div className="flex flex-col">
+                  <span className="text-xs font-semibold text-slate-200">Arrow Key Auto-Edit</span>
+                  <span className="text-[9px] text-slate-500 mt-0.5">Auto-open cell in edit state when navigating</span>
+                </div>
+              </label>
+            </div>
           </div>
 
           {/* Premium Pluggable Live Event Log Panel */}

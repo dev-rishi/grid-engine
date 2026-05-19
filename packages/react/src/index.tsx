@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useSyncExternalStore } from 'react';
+import React, { createContext, useContext, useMemo, useSyncExternalStore, useRef } from 'react';
 import { GridStore, GridState, GridNavigationController, GridNavigationOptions, GridApi } from '@grid-engine/core';
 
 // Create Grid Context
@@ -111,10 +111,16 @@ export function useCellEditState(row: number, col: number) {
  */
 export function useGridNavigationController(options: GridNavigationOptions = {}) {
   const store = useGridStore();
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   
   const controller = useMemo(() => {
-    return new GridNavigationController(store, options);
-  }, [store, options]);
+    return new GridNavigationController(store, {
+      onCellValueChanged: (row, col, val) => optionsRef.current.onCellValueChanged?.(row, col, val),
+      get editTrigger() { return optionsRef.current.editTrigger; },
+      get arrowKeyNavigationEdit() { return optionsRef.current.arrowKeyNavigationEdit; }
+    });
+  }, [store]);
 
   return controller;
 }

@@ -76,3 +76,36 @@ describe('GridStore micro-store functionality', () => {
     });
   });
 });
+
+import { GridNavigationController } from './navigation.js';
+
+describe('GridNavigationController E2E Simulation', () => {
+  it('should successfully update focused cell on ArrowDown navigation', () => {
+    const store = new GridStore({ rowCount: 10, colCount: 5 });
+    const controller = new GridNavigationController(store);
+    
+    // 1. Simulate mouse click on Row 0, Col 0
+    controller.handleMouseDown(0, 0, { button: 0, detail: 1 } as any);
+    expect(store.getState().focusedCell).toEqual({ row: 0, col: 0 });
+    
+    // 2. Simulate ArrowDown key down event
+    controller.handleKeyDown({ key: 'ArrowDown', preventDefault: () => {} } as any);
+    
+    // 3. Verify that focusedCell has successfully navigated to Row 1, Col 0!
+    expect(store.getState().focusedCell).toEqual({ row: 1, col: 0 });
+  });
+
+  it('should enter edit mode on double click setCellEditing', () => {
+    const store = new GridStore({ rowCount: 10, colCount: 5 });
+    const controller = new GridNavigationController(store);
+    
+    // Simulate first click to focus
+    controller.handleMouseDown(0, 0, { button: 0, detail: 1 } as any);
+    expect(store.getState().focusedCell).toEqual({ row: 0, col: 0 });
+    
+    // Simulate double-click event triggering setCellEditing
+    controller.setCellEditing(0, 0, true);
+    expect(store.getState().activeEditCell).toEqual({ row: 0, col: 0 });
+  });
+});
+
