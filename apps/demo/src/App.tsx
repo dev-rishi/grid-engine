@@ -162,8 +162,14 @@ const Cell = React.memo(({ row, col, navigation }: CellProps) => {
     <div
       className={cellClassName}
       style={{ width: colWidth }}
-      onMouseDown={(e) => navigation.handleMouseDown(row, col, e.nativeEvent)}
+      onMouseDown={(e) => {
+        // Focus the grid container to ensure keyboard capture
+        const gridContainer = e.currentTarget.closest('[tabindex="0"]') as HTMLElement;
+        gridContainer?.focus();
+        navigation.handleMouseDown(row, col, e.nativeEvent);
+      }}
       onMouseEnter={() => navigation.handleMouseEnter(row, col)}
+      onDoubleClick={() => navigation.setCellEditing(row, col, true)}
     >
       {isEditing ? (
         CustomEditor ? (
@@ -180,7 +186,21 @@ const Cell = React.memo(({ row, col, navigation }: CellProps) => {
             className="absolute inset-0 w-full h-full px-3 text-sm bg-slate-900 text-white border-2 border-purple-500 outline-none z-20"
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            onBlur={() => navigation.handleMouseDown(row, col, new MouseEvent('mousedown'))}
+            onMouseDown={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onBlur={() => {
+              // Delay blur commit slightly to avoid transient double-click focus races
+              setTimeout(() => {
+                navigation.commitEdit(row, col);
+              }, 150);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                navigation.commitEdit(row, col);
+              } else if (e.key === 'Escape') {
+                navigation.cancelEdit(row, col);
+              }
+            }}
           />
         )
       ) : (
@@ -460,7 +480,7 @@ export default function App() {
     // Custom Event log emitter bindings
     const formatLog = (name: string, payload: any) => {
       const time = new Date().toLocaleTimeString();
-      return `[${time}] ${name} -> ${JSON.stringify(payload)}`;
+      return `[${time}] ${name} -> ${JSON.stringify(payload, null, 2)}`;
     };
 
     const addLog = (msg: string) => {
@@ -567,7 +587,7 @@ export default function App() {
         {/* Right Side: Visual Metrics & Control Dashboard Panel */}
         <div className="w-full md:w-80 flex flex-col gap-6 shrink-0 overflow-y-auto">
           {/* Active coordinate coordinates indicator */}
-          <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-3">
+          <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-3 shrink-0">
             <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
               <TableProperties className="w-4 h-4 text-purple-400" />
               State Inspector
@@ -581,7 +601,7 @@ export default function App() {
           </div>
 
           {/* Premium Pluggable Live Event Log Panel */}
-          <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-3 h-64 min-h-0">
+          <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-3 h-64 shrink-0">
             <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 shrink-0">
               <Terminal className="w-4 h-4 text-emerald-400" />
               Live Core Event Log
@@ -590,17 +610,23 @@ export default function App() {
               {eventLogs.length === 0 ? (
                 <span className="text-slate-600 italic">No events emitted yet. Interact with the grid (resize, select, double click status, edit Price) to broadcast events...</span>
               ) : (
-                eventLogs.map((log, index) => (
-                  <div key={index} className="truncate border-b border-slate-900 pb-1 text-slate-400">
-                    <span className="text-emerald-400">{log.split(' -> ')[0]}</span> {"->"} {log.split(' -> ')[1]}
-                  </div>
-                ))
+                eventLogs.map((log, index) => {
+                  const parts = log.split(' -> ');
+                  const header = parts[0] || '';
+                  const body = parts[1] || '';
+                  return (
+                    <div key={index} className="border-b border-slate-900 pb-1.5 text-slate-400 font-mono text-[9px] break-all whitespace-pre-wrap leading-relaxed">
+                      <span className="text-emerald-400 font-semibold">{header}</span>
+                      {body && <span className="text-purple-300 block pl-2 mt-0.5">{body}</span>}
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>
 
           {/* Quick interactive utility scripts */}
-          <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-4">
+          <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-4 shrink-0">
             <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
               <Layers className="w-4 h-4 text-purple-400" />
               Developer Panel

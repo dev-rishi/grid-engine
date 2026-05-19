@@ -201,7 +201,7 @@ export class GridNavigationController {
   };
 
   // Helper Methods
-  private setCellEditing(row: number, col: number, isEditing: boolean, initialChar: string = ''): void {
+  public setCellEditing(row: number, col: number, isEditing: boolean, initialChar: string = ''): void {
     const key = `${row},${col}`;
     const cell = this.store.getCellState(row, col);
     
@@ -219,11 +219,22 @@ export class GridNavigationController {
     }));
   }
 
-  private commitEdit(row: number, col: number): void {
+  public commitEdit(row: number, col: number): void {
     const key = `${row},${col}`;
     const cell = this.store.getCellState(row, col);
+    if (!cell.isEditing) return;
+
     const activeEditValue = this.store.getState().activeEditValue;
 
+    // 1. Manually dispatch event with correct deltas
+    this.store.dispatchEvent('cellValueChanged', {
+      row,
+      col,
+      oldValue: cell.value,
+      newValue: activeEditValue,
+    });
+
+    // 2. Perform atomic single state update for value, computedValue, and isEditing
     this.store.setState((state) => ({
       cells: {
         ...state.cells,
@@ -243,9 +254,10 @@ export class GridNavigationController {
     }
   }
 
-  private cancelEdit(row: number, col: number): void {
+  public cancelEdit(row: number, col: number): void {
     const key = `${row},${col}`;
     const cell = this.store.getCellState(row, col);
+    if (!cell.isEditing) return;
 
     this.store.setState((state) => ({
       cells: {
