@@ -34,7 +34,7 @@ export function useGridApi(): GridApi {
  */
 export function useGridSelector<T>(selector: (state: GridState) => T): T {
   const store = useGridStore();
-  
+
   return useSyncExternalStore(
     store.subscribe,
     () => selector(store.getState())
@@ -46,7 +46,7 @@ export function useGridSelector<T>(selector: (state: GridState) => T): T {
  */
 export function useGridKeySelector<T>(key: string, selector: (state: GridState) => T): T {
   const store = useGridStore();
-  
+
   return useSyncExternalStore(
     (onStoreChange) => store.subscribeToKey(key, onStoreChange),
     () => selector(store.getState())
@@ -59,7 +59,7 @@ export function useGridKeySelector<T>(key: string, selector: (state: GridState) 
 export function useGridCell(row: number, col: number) {
   const store = useGridStore();
   const key = `cell:${row},${col}`;
-  
+
   const cellState = useSyncExternalStore(
     (onStoreChange) => store.subscribeToKey(key, onStoreChange),
     () => store.getCellState(row, col)
@@ -72,19 +72,17 @@ export function useGridCell(row: number, col: number) {
  * Targeted hook for checking dynamic selection boundary states without re-rendering the whole table.
  */
 export function useCellSelectionState(row: number, col: number) {
-  const focusedCell = useGridKeySelector('focusedCell', (s) => s.focusedCell);
-  const selectedRange = useGridKeySelector('selectedRange', (s) => s.selectedRange);
+  const isFocused = useGridKeySelector('focusedCell', (s) => s.focusedCell?.row === row && s.focusedCell?.col === col);
 
-  const isFocused = focusedCell?.row === row && focusedCell?.col === col;
-  
-  const isSelected = useMemo(() => {
-    if (!selectedRange) return false;
-    const minRow = Math.min(selectedRange.start.row, selectedRange.end.row);
-    const maxRow = Math.max(selectedRange.start.row, selectedRange.end.row);
-    const minCol = Math.min(selectedRange.start.col, selectedRange.end.col);
-    const maxCol = Math.max(selectedRange.start.col, selectedRange.end.col);
+  const isSelected = useGridKeySelector('selectedRange', (s) => {
+    const range = s.selectedRange;
+    if (!range) return false;
+    const minRow = Math.min(range.start.row, range.end.row);
+    const maxRow = Math.max(range.start.row, range.end.row);
+    const minCol = Math.min(range.start.col, range.end.col);
+    const maxCol = Math.max(range.start.col, range.end.col);
     return row >= minRow && row <= maxRow && col >= minCol && col <= maxCol;
-  }, [selectedRange, row, col]);
+  });
 
   return { isFocused, isSelected };
 }
@@ -94,16 +92,18 @@ export function useCellSelectionState(row: number, col: number) {
  */
 export function useCellEditState(row: number, col: number) {
   const store = useGridStore();
-  const activeEditCell = useGridKeySelector('activeEditCell', (s) => s.activeEditCell);
-  const activeEditValue = useGridKeySelector('activeEditValue', (s) => s.activeEditValue);
+  const isEditing = useGridKeySelector('activeEditCell', (s) => s.activeEditCell?.row === row && s.activeEditCell?.col === col);
 
-  const isEditing = activeEditCell?.row === row && activeEditCell?.col === col;
+  // Only subscribe to edit value updates when this cell is the active editor, preventing O(N) re-renders on every keystroke
+  const value = useGridKeySelector('activeEditValue', (s) =>
+    s.activeEditCell?.row === row && s.activeEditCell?.col === col ? s.activeEditValue : ''
+  );
 
   const setValue = (val: string) => {
     store.setState({ activeEditValue: val });
   };
 
-  return { isEditing, value: activeEditValue, setValue };
+  return { isEditing, value, setValue };
 }
 
 /**
@@ -113,7 +113,7 @@ export function useGridNavigationController(options: GridNavigationOptions = {})
   const store = useGridStore();
   const optionsRef = useRef(options);
   optionsRef.current = options;
-  
+
   const controller = useMemo(() => {
     return new GridNavigationController(store, {
       onCellValueChanged: (row, col, val) => optionsRef.current.onCellValueChanged?.(row, col, val),
