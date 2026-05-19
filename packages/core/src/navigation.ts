@@ -151,28 +151,28 @@ export class GridNavigationController {
           }
           break;
         case 'ArrowLeft':
-          event.preventDefault();
-          this.commitEdit(row, col);
-          const leftCol = Math.max(0, col - 1);
-          this.rangeStart = { row, col: leftCol };
-          this.store.setState({
-            focusedCell: { row, col: leftCol },
-            selectedRange: { start: { row, col: leftCol }, end: { row, col: leftCol } }
-          });
           if (this.options.arrowKeyNavigationEdit) {
+            event.preventDefault();
+            this.commitEdit(row, col);
+            const leftCol = Math.max(0, col - 1);
+            this.rangeStart = { row, col: leftCol };
+            this.store.setState({
+              focusedCell: { row, col: leftCol },
+              selectedRange: { start: { row, col: leftCol }, end: { row, col: leftCol } }
+            });
             this.setCellEditing(row, leftCol, true);
           }
           break;
         case 'ArrowRight':
-          event.preventDefault();
-          this.commitEdit(row, col);
-          const rightCol = Math.min(maxCol, col + 1);
-          this.rangeStart = { row, col: rightCol };
-          this.store.setState({
-            focusedCell: { row, col: rightCol },
-            selectedRange: { start: { row, col: rightCol }, end: { row, col: rightCol } }
-          });
           if (this.options.arrowKeyNavigationEdit) {
+            event.preventDefault();
+            this.commitEdit(row, col);
+            const rightCol = Math.min(maxCol, col + 1);
+            this.rangeStart = { row, col: rightCol };
+            this.store.setState({
+              focusedCell: { row, col: rightCol },
+              selectedRange: { start: { row, col: rightCol }, end: { row, col: rightCol } }
+            });
             this.setCellEditing(row, rightCol, true);
           }
           break;

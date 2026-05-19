@@ -107,5 +107,89 @@ describe('GridNavigationController E2E Simulation', () => {
     controller.setCellEditing(0, 0, true);
     expect(store.getState().activeEditCell).toEqual({ row: 0, col: 0 });
   });
+
+  it('should navigate and open the next cell in edit mode if arrowKeyNavigationEdit is true in view mode', () => {
+    const store = new GridStore({ rowCount: 10, colCount: 5 });
+    const controller = new GridNavigationController(store, { arrowKeyNavigationEdit: true });
+    
+    controller.handleMouseDown(0, 0, { button: 0, detail: 1 } as any);
+    controller.handleKeyDown({ key: 'ArrowDown', preventDefault: () => {} } as any);
+    
+    expect(store.getState().focusedCell).toEqual({ row: 1, col: 0 });
+    expect(store.getState().activeEditCell).toEqual({ row: 1, col: 0 });
+  });
+
+  it('should navigate and open the next cell in view mode if arrowKeyNavigationEdit is false in view mode', () => {
+    const store = new GridStore({ rowCount: 10, colCount: 5 });
+    const controller = new GridNavigationController(store, { arrowKeyNavigationEdit: false });
+    
+    controller.handleMouseDown(0, 0, { button: 0, detail: 1 } as any);
+    controller.handleKeyDown({ key: 'ArrowDown', preventDefault: () => {} } as any);
+    
+    expect(store.getState().focusedCell).toEqual({ row: 1, col: 0 });
+    expect(store.getState().activeEditCell).toBeNull();
+  });
+
+  it('should navigate and open the next cell in edit mode if arrowKeyNavigationEdit is true in edit mode', () => {
+    const store = new GridStore({ rowCount: 10, colCount: 5 });
+    const controller = new GridNavigationController(store, { arrowKeyNavigationEdit: true });
+    
+    controller.handleMouseDown(0, 0, { button: 0, detail: 1 } as any);
+    controller.setCellEditing(0, 0, true);
+    expect(store.getState().activeEditCell).toEqual({ row: 0, col: 0 });
+    
+    controller.handleKeyDown({ key: 'ArrowDown', preventDefault: () => {} } as any);
+    expect(store.getState().focusedCell).toEqual({ row: 1, col: 0 });
+    expect(store.getState().activeEditCell).toEqual({ row: 1, col: 0 });
+  });
+
+  it('should navigate and open the next cell in view mode if arrowKeyNavigationEdit is false in edit mode on ArrowDown', () => {
+    const store = new GridStore({ rowCount: 10, colCount: 5 });
+    const controller = new GridNavigationController(store, { arrowKeyNavigationEdit: false });
+    
+    controller.handleMouseDown(0, 0, { button: 0, detail: 1 } as any);
+    controller.setCellEditing(0, 0, true);
+    expect(store.getState().activeEditCell).toEqual({ row: 0, col: 0 });
+    
+    controller.handleKeyDown({ key: 'ArrowDown', preventDefault: () => {} } as any);
+    expect(store.getState().focusedCell).toEqual({ row: 1, col: 0 });
+    expect(store.getState().activeEditCell).toBeNull();
+  });
+
+  it('should NOT navigate or commit edit on ArrowLeft/ArrowRight if arrowKeyNavigationEdit is false in edit mode', () => {
+    const store = new GridStore({ rowCount: 10, colCount: 5 });
+    const controller = new GridNavigationController(store, { arrowKeyNavigationEdit: false });
+    
+    controller.handleMouseDown(0, 1, { button: 0, detail: 1 } as any);
+    controller.setCellEditing(0, 1, true);
+    expect(store.getState().activeEditCell).toEqual({ row: 0, col: 1 });
+    
+    // Simulate ArrowLeft keydown
+    const mockEvent = { key: 'ArrowLeft', preventDefault: vi.fn() } as any;
+    controller.handleKeyDown(mockEvent);
+    
+    // Should NOT have navigated and should still be editing (0,1)
+    expect(store.getState().focusedCell).toEqual({ row: 0, col: 1 });
+    expect(store.getState().activeEditCell).toEqual({ row: 0, col: 1 });
+    expect(mockEvent.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it('should navigate and commit edit on ArrowLeft/ArrowRight if arrowKeyNavigationEdit is true in edit mode', () => {
+    const store = new GridStore({ rowCount: 10, colCount: 5 });
+    const controller = new GridNavigationController(store, { arrowKeyNavigationEdit: true });
+    
+    controller.handleMouseDown(0, 1, { button: 0, detail: 1 } as any);
+    controller.setCellEditing(0, 1, true);
+    expect(store.getState().activeEditCell).toEqual({ row: 0, col: 1 });
+    
+    // Simulate ArrowLeft keydown
+    const mockEvent = { key: 'ArrowLeft', preventDefault: vi.fn() } as any;
+    controller.handleKeyDown(mockEvent);
+    
+    // Should have navigated to (0,0) and entered edit mode
+    expect(store.getState().focusedCell).toEqual({ row: 0, col: 0 });
+    expect(store.getState().activeEditCell).toEqual({ row: 0, col: 0 });
+    expect(mockEvent.preventDefault).toHaveBeenCalled();
+  });
 });
 
