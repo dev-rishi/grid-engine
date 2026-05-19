@@ -1,0 +1,21 @@
+{
+  "name": "grid-engine-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Headless high-performance spreadsheet and grid engine",
+  "scripts": {
+    "build": "pnpm --filter \"@grid-engine/*\" run build",
+    "test": "pnpm --filter \"@grid-engine/*\" run test",
+    "dev:demo": "pnpm --filter \"demo-app\" run dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^7.10.0",
+    "vitest": "^1.6.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

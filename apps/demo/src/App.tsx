@@ -1,0 +1,533 @@
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { GridStore, ServerRowModelController, IGridDatasource, GridCellCoordinate } from '@grid-engine/core';
+import {
+  GridProvider,
+  useGridStore,
+  useGridSelector,
+  useGridCell,
+  useCellSelectionState,
+  useCellEditState,
+  useGridNavigationController
+} from '@grid-engine/react';
+import { Cpu, Server, RefreshCw, Zap, TableProperties, HelpCircle, Layers } from 'lucide-react';
+
+// Define our grid column definitions
+interface ColumnDef {
+  header: string;
+  width: number;
+}
+
+const COLUMNS: ColumnDef[] = [
+  { header: 'Row ID', width: 80 },
+  { header: 'Product Name', width: 180 },
+  { header: 'Price ($)', width: 120 },
+  { header: 'Quantity', width: 100 },
+  { header: 'Subtotal ($)', width: 140 },
+  { header: 'Status', width: 120 },
+];
+
+const DEFAULT_ROW_HEIGHT = 38;
+
+// ==========================================
+// 1. High Performance Grid Cell Component
+// ==========================================
+interface CellProps {
+  row: number;
+  col: number;
+  colWidth: number;
+  navigation: ReturnType<typeof useGridNavigationController>;
+}
+
+const Cell = React.memo(({ row, col, colWidth, navigation }: CellProps) => {
+  const cellState = useGridCell(row, col);
+  const { isFocused, isSelected } = useCellSelectionState(row, col);
+  const { isEditing, value, setValue } = useCellEditState(row, col);
+
+  // Generate CSS styling based on coordinate states
+  const cellClassName = useMemo(() => {
+    let classes = 'flex items-center px-3 h-full border-r border-slate-800 text-sm select-none relative transition-colors duration-75 ';
+    if (isFocused) {
+      classes += 'bg-slate-900 border-2 border-blue-500 z-10 ';
+    } else if (isSelected) {
+      classes += 'bg-blue-500/10 ';
+    } else {
+      classes += 'bg-slate-950 text-slate-300 ';
+    }
+    
+    // Status column colors
+    if (col === 5) {
+      if (cellState.value === 'Active') classes += 'text-emerald-400 font-medium';
+      if (cellState.value === 'Pending') classes += 'text-amber-400 font-medium';
+      if (cellState.value === 'Inactive') classes += 'text-slate-500 font-medium';
+    }
+    
+    return classes;
+  }, [isFocused, isSelected, col, cellState.value]);
+
+  return (
+    <div
+      className={cellClassName}
+      style={{ width: colWidth }}
+      onMouseDown={(e) => navigation.handleMouseDown(row, col, e.nativeEvent)}
+      onMouseEnter={() => navigation.handleMouseEnter(row, col)}
+    >
+      {isEditing ? (
+        <input
+          autoFocus
+          className="absolute inset-0 w-full h-full px-3 text-sm bg-slate-900 text-white border-2 border-blue-500 outline-none z-20"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onBlur={() => navigation.handleMouseDown(row, col, new MouseEvent('mousedown'))}
+        />
+      ) : (
+        <span className="truncate">
+          {cellState.computedValue ?? cellState.value}
+        </span>
+      )}
+    </div>
+  );
+});
+
+Cell.displayName = 'Cell';
+
+// ==========================================
+// 2. High Performance Grid Body
+// ==========================================
+interface GridViewProps {
+  rowCount: number;
+  rowHeights: Record<number, number>;
+  onCellValueChanged: (row: number, col: number, val: any) => void;
+  serverController?: ServerRowModelController;
+}
+
+function GridView({ rowCount, rowHeights, onCellValueChanged, serverController }: GridViewProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const store = useGridStore();
+  const navigation = useGridNavigationController({ onCellValueChanged });
+
+  // Keyboard navigation attachment
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Only capture keyboard if focusing inside grid or body
+      if (document.activeElement === document.body || containerRef.current?.contains(document.activeElement)) {
+        navigation.handleKeyDown(e);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    window.addEventListener('mouseup', navigation.handleMouseUp);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+      window.removeEventListener('mouseup', navigation.handleMouseUp);
+    };
+  }, [navigation]);
+
+  // Virtualization hook
+  const rowVirtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => containerRef.current,
+    estimateSize: (index) => rowHeights[index] ?? DEFAULT_ROW_HEIGHT,
+    overscan: 10,
+  });
+
+  const totalWidth = COLUMNS.reduce((sum, col) => sum + col.width, 0);
+
+  // If server row model controller exists, trigger fetching on scroll window viewport
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  useEffect(() => {
+    if (serverController && virtualRows.length > 0) {
+      virtualRows.forEach((row) => {
+        serverController.getRow(row.index);
+      });
+    }
+  }, [virtualRows, serverController]);
+
+  return (
+    <div className="flex flex-col h-full border border-slate-800 rounded-lg overflow-hidden bg-slate-950 shadow-2xl">
+      {/* Sticky Table Header */}
+      <div className="flex bg-slate-900 border-b border-slate-800 shrink-0 select-none z-10">
+        {COLUMNS.map((col, i) => (
+          <div
+            key={i}
+            className="flex items-center px-3 h-10 border-r border-slate-800 text-xs font-semibold text-slate-400 uppercase tracking-wider"
+            style={{ width: col.width }}
+          >
+            {col.header}
+          </div>
+        ))}
+      </div>
+
+      {/* Virtual Scroll Window Container */}
+      <div
+        ref={containerRef}
+        className="flex-1 overflow-auto outline-none"
+        tabIndex={0}
+      >
+        <div
+          className="relative w-full"
+          style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+        >
+          {virtualRows.map((virtualRow) => {
+            const rowIndex = virtualRow.index;
+            
+            // If in server-side mode, query row data from block paginator
+            if (serverController) {
+              const { data, isLoading } = serverController.getRow(rowIndex);
+              
+              if (isLoading) {
+                return (
+                  <div
+                    key={virtualRow.key}
+                    data-virtual-row
+                    className="absolute left-0 top-0 w-full flex border-b border-slate-900 items-center px-4 bg-slate-950/40 text-slate-500 animate-pulse text-xs"
+                    style={{
+                      height: `${virtualRow.size}px`,
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                  >
+                    Loading chunk data...
+                  </div>
+                );
+              }
+
+              // Pre-populate store values with fetched block row data dynamically
+              if (data) {
+                COLUMNS.forEach((_, colIndex) => {
+                  const key = `${rowIndex},${colIndex}`;
+                  const current = store.getState().cells[key]?.value;
+                  const nextVal = data[colIndex];
+                  if (current !== nextVal) {
+                    store.setCellValue(rowIndex, colIndex, nextVal);
+                  }
+                });
+              }
+            }
+
+            return (
+              <div
+                key={virtualRow.key}
+                data-virtual-row
+                className="absolute left-0 top-0 w-full flex border-b border-slate-900"
+                style={{
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                {COLUMNS.map((col, colIndex) => (
+                  <Cell
+                    key={colIndex}
+                    row={rowIndex}
+                    col={colIndex}
+                    colWidth={col.width}
+                    navigation={navigation}
+                  />
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// 3. Main Dashboard Application
+// ==========================================
+export default function App() {
+  const [activeTab, setActiveTab] = useState<'client' | 'server'>('client');
+  const [gridStateInfo, setGridStateInfo] = useState<string>('Focused: None | Selected: None');
+
+  // A. Create Client-Side Grid Instance
+  const clientStore = useMemo(() => {
+    const store = new GridStore({
+      rowCount: 10000,
+      colCount: COLUMNS.length,
+      rowHeights: {},
+      colWidths: COLUMNS.reduce((acc, col, i) => ({ ...acc, [i]: col.width }), {}),
+    });
+
+    // Populate initial Client Data (10,000 rows)
+    const initialCells: Record<string, any> = {};
+    const statuses = ['Active', 'Pending', 'Inactive'];
+    const products = ['Laser Keyboard', 'Wireless Mouse', 'Mechanical Keycap', 'Sleek Stand', 'Ergonomic Desk', 'Premium Webcam'];
+
+    for (let r = 0; r < 10000; r++) {
+      const price = Math.floor(Math.random() * 200) + 15;
+      const qty = Math.floor(Math.random() * 10) + 1;
+      const subtotal = (price * qty).toFixed(2);
+      
+      initialCells[`${r},0`] = { value: `R-${100000 + r}`, computedValue: `R-${100000 + r}` };
+      initialCells[`${r},1`] = { value: products[r % products.length], computedValue: products[r % products.length] };
+      initialCells[`${r},2`] = { value: price.toString(), computedValue: price.toString() };
+      initialCells[`${r},3`] = { value: qty.toString(), computedValue: qty.toString() };
+      initialCells[`${r},4`] = { value: subtotal, computedValue: subtotal };
+      initialCells[`${r},5`] = { value: statuses[r % statuses.length], computedValue: statuses[r % statuses.length] };
+    }
+
+    store.setState({ cells: initialCells });
+    return store;
+  }, []);
+
+  // Pluggable formula recalculations on edit commit
+  const handleClientCellValueChanged = (row: number, col: number, val: any) => {
+    // If Price (2) or Quantity (3) edits committed, recalculate Subtotal (4)
+    if (col === 2 || col === 3) {
+      const priceVal = clientStore.getCellState(row, 2).value;
+      const qtyVal = clientStore.getCellState(row, 3).value;
+      const price = parseFloat(priceVal) || 0;
+      const qty = parseInt(qtyVal, 10) || 0;
+      const subtotal = (price * qty).toFixed(2);
+      
+      clientStore.setCellValue(row, 4, subtotal);
+    }
+  };
+
+  // B. Create Server-Side Grid Instance
+  const serverStore = useMemo(() => {
+    return new GridStore({
+      rowCount: 100000, // 100,000 rows
+      colCount: COLUMNS.length,
+      rowHeights: {},
+      colWidths: COLUMNS.reduce((acc, col, i) => ({ ...acc, [i]: col.width }), {}),
+    });
+  }, []);
+
+  // Generate remote paginated datasource with simulated 500ms block loading delay
+  const mockDatasource = useMemo<IGridDatasource>(() => {
+    const products = ['Neon Controller', 'Haptic Earphone', 'VR Headset', 'Smart Mug', 'RGB Cable', 'Cozy Blanket'];
+    const statuses = ['Active', 'Pending', 'Inactive'];
+
+    return {
+      getRows: async (params) => {
+        // Simulate network roundtrip latency
+        await new Promise((resolve) => setTimeout(resolve, 450));
+
+        const rows: any[][] = [];
+        const length = params.endRow - params.startRow;
+        
+        for (let i = 0; i < length; i++) {
+          const r = params.startRow + i;
+          const price = Math.floor(Math.random() * 150) + 10;
+          const qty = Math.floor(Math.random() * 5) + 1;
+          const subtotal = (price * qty).toFixed(2);
+          
+          rows.push([
+            `SR-${100000 + r}`,
+            products[r % products.length],
+            price.toString(),
+            qty.toString(),
+            subtotal,
+            statuses[r % statuses.length],
+          ]);
+        }
+
+        return {
+          rows,
+          totalCount: 100000,
+        };
+      },
+    };
+  }, []);
+
+  const serverController = useMemo(() => {
+    return new ServerRowModelController(serverStore, {
+      datasource: mockDatasource,
+      blockSize: 100,
+    });
+  }, [serverStore, mockDatasource]);
+
+  // Hook into active store selection boundaries to display performance statistics
+  useEffect(() => {
+    const store = activeTab === 'client' ? clientStore : serverStore;
+    
+    const unsubscribe = store.subscribe((state) => {
+      const focus = state.focusedCell;
+      const range = state.selectedRange;
+      
+      const focusText = focus ? `Row ${focus.row}, Col ${focus.col}` : 'None';
+      const rangeText = range 
+        ? `(${range.start.row},${range.start.col}) to (${range.end.row},${range.end.col})`
+        : 'None';
+      
+      setGridStateInfo(`Focused Cell: ${focusText} | Selected Range: ${rangeText}`);
+    });
+
+    return unsubscribe;
+  }, [activeTab, clientStore, serverStore]);
+
+  return (
+    <div className="flex flex-col h-full w-full bg-slate-950 text-slate-100 p-6 box-border">
+      {/* Premium Dashboard Header */}
+      <header className="flex flex-col md:flex-row items-start md:items-center justify-between pb-6 border-b border-slate-900 gap-4 shrink-0">
+        <div>
+          <div className="flex items-center gap-3">
+            <span className="p-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+              <Zap className="w-6 h-6 animate-pulse" />
+            </span>
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-white via-slate-200 to-slate-500 bg-clip-text text-transparent">
+              Headless Grid Engine
+            </h1>
+            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
+              v1.0.0
+            </span>
+          </div>
+          <p className="text-sm text-slate-400 mt-1 max-w-xl">
+            A high-performance unstyled spreadsheet hook set built on targeted coordinate bindings and WAI-ARIA keyboard navigation models.
+          </p>
+        </div>
+
+        {/* Dynamic Navigation Mode Tabs */}
+        <div className="flex p-1 bg-slate-900 border border-slate-800 rounded-xl shrink-0">
+          <button
+            onClick={() => setActiveTab('client')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+              activeTab === 'client'
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+            }`}
+          >
+            <Cpu className="w-4 h-4" />
+            Client Performance (10k Rows)
+          </button>
+          <button
+            onClick={() => setActiveTab('server')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+              activeTab === 'server'
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+            }`}
+          >
+            <Server className="w-4 h-4" />
+            Server Infinite scroll (100k Rows)
+          </button>
+        </div>
+      </header>
+
+      {/* Grid Controller View */}
+      <main className="flex-1 min-h-0 flex flex-col md:flex-row gap-6 mt-6 overflow-hidden">
+        {/* Left Side: Real-time Interactive Grid Viewport */}
+        <div className="flex-1 min-h-0 min-w-0">
+          {activeTab === 'client' ? (
+            <GridProvider store={clientStore}>
+              <GridView
+                rowCount={10000}
+                rowHeights={{}}
+                onCellValueChanged={handleClientCellValueChanged}
+              />
+            </GridProvider>
+          ) : (
+            <GridProvider store={serverStore}>
+              <GridView
+                rowCount={100000}
+                rowHeights={{}}
+                onCellValueChanged={() => {}}
+                serverController={serverController}
+              />
+            </GridProvider>
+          )}
+        </div>
+
+        {/* Right Side: Visual Metrics & Control Dashboard Panel */}
+        <div className="w-full md:w-80 flex flex-col gap-6 shrink-0 overflow-y-auto">
+          {/* Active coordinate coordinates indicator */}
+          <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-3">
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <TableProperties className="w-4 h-4 text-blue-400" />
+              State Inspector
+            </h3>
+            <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-blue-400 leading-relaxed break-all">
+              {gridStateInfo}
+            </div>
+            <p className="text-slate-500 text-[10px] leading-relaxed">
+              * Cell coordinates reflect absolute indexes in memory. Updates bypass React's virtual DOM tree using targeted micro-subscriptions to maximize rendering framerate.
+            </p>
+          </div>
+
+          {/* Quick interactive utility scripts */}
+          <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-4">
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Layers className="w-4 h-4 text-purple-400" />
+              Developer Panel
+            </h3>
+            
+            {activeTab === 'client' ? (
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => {
+                    const store = clientStore;
+                    const cells = { ...store.getState().cells };
+                    // Reset all subtotals
+                    for (let r = 0; r < 10000; r++) {
+                      cells[`${r},2`] = { value: '0', computedValue: '0' };
+                      cells[`${r},3`] = { value: '0', computedValue: '0' };
+                      cells[`${r},4`] = { value: '0.00', computedValue: '0.00' };
+                    }
+                    store.setState({ cells });
+                  }}
+                  className="flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-lg bg-slate-800 text-slate-200 border border-slate-700 hover:bg-slate-700 hover:text-white text-xs font-semibold transition-all"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Reset Client Prices to Zero
+                </button>
+                <div className="p-3 bg-slate-950 border border-slate-900 rounded-lg text-slate-400 text-xs leading-relaxed">
+                  <strong>Client Formulas</strong>: Edits in columns <strong>Price</strong> or <strong>Quantity</strong> immediately evaluate subtotal formula calculations on value commit.
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => {
+                    serverController.purgeCache();
+                  }}
+                  className="flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-lg bg-slate-800 text-slate-200 border border-slate-700 hover:bg-slate-700 hover:text-white text-xs font-semibold transition-all"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Purge Block Cache
+                </button>
+                <div className="p-3 bg-slate-950 border border-slate-900 rounded-lg text-slate-400 text-xs leading-relaxed">
+                  <strong>Server Blocks</strong>: Data is loaded dynamically in chunks of 100 rows with simulated network delay. Purging cache empties blocks, forcing fresh server queries as you scroll.
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Quick Accessibility Guide */}
+          <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col gap-3">
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <HelpCircle className="w-4 h-4 text-emerald-400" />
+              Keyboard Shortcuts
+            </h3>
+            <ul className="text-slate-400 text-xs leading-relaxed flex flex-col gap-2 font-medium">
+              <li className="flex justify-between border-b border-slate-900 pb-1.5">
+                <span>Navigate Cells</span>
+                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-blue-400 text-[10px]">Arrow Keys</span>
+              </li>
+              <li className="flex justify-between border-b border-slate-900 pb-1.5">
+                <span>Expand Range</span>
+                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-blue-400 text-[10px]">Shift + Arrows</span>
+              </li>
+              <li className="flex justify-between border-b border-slate-900 pb-1.5">
+                <span>Enter Edit Mode</span>
+                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-blue-400 text-[10px]">Enter or Double Click</span>
+              </li>
+              <li className="flex justify-between border-b border-slate-900 pb-1.5">
+                <span>Immediate Type</span>
+                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-blue-400 text-[10px]">Any Key</span>
+              </li>
+              <li className="flex justify-between border-b border-slate-900 pb-1.5">
+                <span>Commit & Down</span>
+                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-blue-400 text-[10px]">Enter</span>
+              </li>
+              <li className="flex justify-between pb-0.5">
+                <span>Cancel & Revert</span>
+                <span className="font-mono bg-slate-950 px-1 py-0.5 rounded text-blue-400 text-[10px]">Escape</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
